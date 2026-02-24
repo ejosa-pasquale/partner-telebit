@@ -1,10 +1,11 @@
-# EV Field Service – Pricing & Margini (Streamlit)
+# EV Field Service – Pricing & Margini (Streamlit) – v3
 
-## Novità v2
-- **Prezzario cliente precaricabile** nel repo: `data/defaults/client_pricelist.xlsx`
-- **Listini partner persistenti**: salvati in `data/partners/<Regione>.xlsx` (riutilizzabili senza ricaricare)
-
-> Nota: Streamlit Community Cloud può avere filesystem non persistente. Per produzione: storage esterno (S3/Blob/DB).
+## Novità v3
+- **Override totale partner** (CSV)
+  - colonne: `block,distance,partner_total_override`
+  - opzionale: `region`
+- Prezzario cliente precaricabile: `data/defaults/client_pricelist.xlsx`
+- Listini partner persistenti: `data/partners/<Regione>.xlsx`
 
 ## Avvio locale
 ```bash
@@ -14,10 +15,5 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Precaricare prezzario cliente
-1. Metti il tuo file Excel nel repo:
-   - `data/defaults/client_pricelist.xlsx`
-2. L'app mostrerà l'opzione **Usa precaricato (repo)**.
-
-## Override prezzi partner (opzionale)
-CSV con colonne: `block,distance,item_id,fixed_price`
+## Override totale partner
+Se carichi un override totale, il **Totale Partner (unitario)** viene preso dal CSV e **non** dalla somma item.
