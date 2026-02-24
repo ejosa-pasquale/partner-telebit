@@ -15,15 +15,23 @@ DEFAULT_DIR = DATA_DIR / "defaults"
 PARTNER_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Precarico opzionale del listino cliente (metti qui il file nel repo)
+DEFAULT_CLIENT_XLSX = DEFAULT_DIR / "client_pricelist.xlsx"
+
 
 # -----------------------------
 # Parsing template/matrice Excel
 # -----------------------------
 ITEM_RE = re.compile(r"^\s*Item\s*([0-9]+(?:\.[a-zA-Z])?)\s*[:\-]?\s*(.*)$")
 
+@st.cache_data(show_spinner=False)
+def parse_pricing_matrix_xlsx_cached(file_bytes: bytes) -> pd.DataFrame:
+    return parse_pricing_matrix_xlsx(file_bytes)
+
 def parse_pricing_matrix_xlsx(file_bytes: bytes) -> pd.DataFrame:
     """
-    Parse the 'Format per Pricing Installazione - EV Field Service.xlsx'-like sheet.
+    Parse an Excel matrix in the same format of:
+    'Format per Pricing Installazione - EV Field Service.xlsx'
 
     Output columns:
       - block: e.g. 'Installazione Wallbox 7,4 kW monofase'
@@ -34,30 +42,27 @@ def parse_pricing_matrix_xlsx(file_bytes: bytes) -> pd.DataFrame:
       - price: numeric
     """
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
-    # Prefer first sheet
     ws = wb[wb.sheetnames[0]]
 
-    # Read all rows into list for easier scanning
     max_row, max_col = ws.max_row, ws.max_column
     grid = [[ws.cell(r, c).value for c in range(1, max_col + 1)] for r in range(1, max_row + 1)]
 
     rows_out = []
-
     r = 0
     current_block = None
     distances = None  # list of (col_idx, distance_label)
+
     while r < len(grid):
         row = grid[r]
         b = row[1] if len(row) > 1 else None  # column B (index 1)
+
         if isinstance(b, str) and b.strip().lower().startswith("installazione"):
             current_block = b.strip()
-            # Distances are on the same row, columns C.. (index 2..)
             distances = []
-            for ci in range(2, len(row)):
+            for ci in range(2, len(row)):  # columns C...
                 v = row[ci]
                 if v is None or (isinstance(v, str) and v.strip() == ""):
                     continue
-                # Stop if we hit something not distance-like? we accept any non-empty label
                 distances.append((ci, str(v).strip()))
             r += 1
             continue
@@ -76,7 +81,6 @@ def parse_pricing_matrix_xlsx(file_bytes: bytes) -> pd.DataFrame:
                         try:
                             price = float(price)
                         except Exception:
-                            # ignore non-numeric
                             continue
                         rows_out.append(
                             {
@@ -89,7 +93,7 @@ def parse_pricing_matrix_xlsx(file_bytes: bytes) -> pd.DataFrame:
                             }
                         )
 
-        # Reset when we hit a fully blank separator row (common in template)
+        # reset on separator blank row
         if current_block and all((v is None or (isinstance(v, str) and v.strip() == "")) for v in row):
             current_block = None
             distances = None
@@ -120,69 +124,118 @@ def format_eur(x: float) -> str:
 # -----------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
-st.caption("Carica listini partner (per regione) e il prezzario del cliente. Confronta e calcola margine + rebate 5%.")
+st.caption("Prezzario cliente (anche precaricato) + listini partner per regione. Margine su N installazioni + rebate 5%.")
 
+
+# -----------------------------
+# Sidebar: gestione listini
+# -----------------------------
 with st.sidebar:
-    st.header("1) Configurazione")
+    st.header("Configurazione")
     rebate_pct = st.number_input("Rebate al cliente finale (%)", min_value=0.0, max_value=100.0, value=5.0, step=0.5) / 100.0
+
     st.markdown("---")
-    st.subheader("Carica/aggiorna listino Partner (per regione)")
+    st.subheader("Prezzario Cliente")
+    has_default_client = DEFAULT_CLIENT_XLSX.exists()
+    client_mode = st.radio(
+        "Sorgente prezzario cliente",
+        options=(["Usa precaricato (repo)"] if has_default_client else []) + ["Carica file Excel"],
+        index=0 if has_default_client else 0,
+    )
+
+    client_file_bytes = None
+    if client_mode.startswith("Usa precaricato"):
+        client_file_bytes = load_xlsx_from_path(DEFAULT_CLIENT_XLSX)
+        st.success(f"Usando prezzario precaricato: {DEFAULT_CLIENT_XLSX.name}")
+        with st.expander("Sostituire il prezzario precaricato"):
+            st.markdown(
+                f"Carica il tuo file nel repo in `{DEFAULT_CLIENT_XLSX.as_posix()}` con nome `{DEFAULT_CLIENT_XLSX.name}`."
+            )
+    else:
+        client_upl = st.file_uploader("Carica prezzario cliente (xlsx)", type=["xlsx"], key="client_upl")
+        if client_upl:
+            client_file_bytes = client_upl.getvalue()
+
+    st.markdown("---")
+    st.subheader("Listini Partner (persistenti)")
+    st.caption("Carica una volta per regione: viene salvato su disco (cartella data/partners).")
+
     region = st.text_input("Regione (es. Lombardia, Lazio, ...)", value="")
-    partner_file = st.file_uploader("File Excel listino partner (stesso formato del template)", type=["xlsx"], key="partner_upl")
+    partner_file = st.file_uploader("File Excel listino partner (xlsx)", type=["xlsx"], key="partner_upl")
     if st.button("Salva listino partner", disabled=not (region.strip() and partner_file)):
         save_upload(partner_file.getvalue(), PARTNER_DIR / f"{region.strip()}.xlsx")
         st.success(f"Salvato: {region.strip()}.xlsx")
 
-    st.markdown("---")
-    st.subheader("Carica prezzario Cliente")
-    client_file = st.file_uploader("File Excel prezzario cliente (stesso formato)", type=["xlsx"], key="client_upl")
+    # elenco e gestione (delete)
+    st.markdown("**Regioni salvate**")
+    partner_files = sorted([p for p in PARTNER_DIR.glob("*.xlsx")])
+    if partner_files:
+        for p in partner_files:
+            c1, c2 = st.columns([3, 1])
+            c1.write(p.stem)
+            if c2.button("Elimina", key=f"del_{p.stem}"):
+                p.unlink(missing_ok=True)
+                st.rerun()
+    else:
+        st.info("Nessun listino partner salvato ancora.")
 
     st.markdown("---")
     st.subheader("Override prezzi partner (opzionale)")
-    st.caption("Carica un CSV con colonne: block,distance,item_id,fixed_price")
+    st.caption("CSV con colonne: block,distance,item_id,fixed_price")
     override_csv = st.file_uploader("Override CSV", type=["csv"], key="override_upl")
 
+    st.markdown("---")
+    st.subheader("Persistenza su Streamlit Cloud")
+    st.caption(
+        "Se pubblichi su Streamlit Community Cloud, i file salvati localmente potrebbero non essere permanenti. "
+        "Per persistenza vera usa storage esterno (S3/Blob/DB)."
+    )
 
-# List available partner regions
+
+# List available partner regions (after possible delete/save)
 partner_files = sorted([p for p in PARTNER_DIR.glob("*.xlsx")])
 regions_available = [p.stem for p in partner_files]
 
+if client_file_bytes is None:
+    st.info("Carica (o precarica) il prezzario Cliente per iniziare.")
+    st.stop()
+
+if not regions_available:
+    st.warning("Carica almeno un listino partner in sidebar (una regione).")
+    st.stop()
+
+
+# -----------------------------
+# Main: selezioni
+# -----------------------------
 colA, colB = st.columns([1, 2], gap="large")
 
 with colA:
-    st.subheader("2) Selezione listini")
-    if not regions_available:
-        st.warning("Nessun listino partner salvato. Caricalo dalla sidebar.")
-    selected_region = st.selectbox("Regione (partner)", options=regions_available if regions_available else ["(nessuno)"])
+    st.subheader("Selezione")
+    selected_region = st.selectbox("Regione (partner)", options=regions_available)
     qty_install = st.number_input("Numero installazioni", min_value=1, value=1, step=1)
 
 with colB:
-    st.subheader("3) Input operativi")
+    st.subheader("Input operativi")
     st.markdown("Scegli il pacchetto (tipo installazione + distanza) e quali Item includere.")
 
-# Validate uploads
-if not client_file:
-    st.info("Carica il prezzario Cliente dalla sidebar per iniziare.")
-    st.stop()
-if not regions_available:
-    st.stop()
 
-# Parse client matrix
+# -----------------------------
+# Parse + merge
+# -----------------------------
 try:
-    df_client = parse_pricing_matrix_xlsx(client_file.getvalue()).rename(columns={"price": "client_price"})
+    df_client = parse_pricing_matrix_xlsx_cached(client_file_bytes).rename(columns={"price": "client_price"})
 except Exception as e:
     st.error(f"Errore parsing prezzario cliente: {e}")
     st.stop()
 
-# Parse partner matrix
 partner_path = PARTNER_DIR / f"{selected_region}.xlsx"
 try:
-    df_partner = parse_pricing_matrix_xlsx(load_xlsx_from_path(partner_path)).rename(columns={"price": "partner_price"})
+    df_partner = parse_pricing_matrix_xlsx_cached(load_xlsx_from_path(partner_path)).rename(columns={"price": "partner_price"})
 except Exception as e:
     st.error(f"Errore parsing listino partner ({selected_region}): {e}")
     st.stop()
 
-# Merge
 key_cols = ["block", "distance", "item_id"]
 df = df_client.merge(
     df_partner[key_cols + ["partner_price"]],
@@ -195,9 +248,9 @@ missing_partner = df["partner_price"].isna().sum()
 if missing_partner:
     st.warning(f"Attenzione: {missing_partner} righe del cliente non hanno corrispondenza nel listino partner della regione selezionata.")
 
-# Override
 df["partner_price_effective"] = df["partner_price"]
-override_df = None
+
+# Override
 if override_csv:
     try:
         override_df = pd.read_csv(override_csv)
@@ -214,7 +267,10 @@ if override_csv:
     except Exception as e:
         st.error(f"Override CSV non valido: {e}")
 
-# Package selection
+
+# -----------------------------
+# Scelta blocco/distanza + items
+# -----------------------------
 blocks = sorted(df["block"].unique())
 sel_block = st.selectbox("Tipo installazione", options=blocks)
 distances = sorted(df.loc[df["block"] == sel_block, "distance"].unique())
@@ -222,11 +278,9 @@ sel_dist = st.selectbox("Distanza dal contatore", options=distances)
 
 df_sel = df[(df["block"] == sel_block) & (df["distance"] == sel_dist)].copy()
 df_sel["include"] = True
-
-st.markdown("#### Item inclusi")
 df_sel = df_sel.sort_values(by=["item_id"])
 
-# UI table with checkboxes
+st.markdown("#### Item inclusi")
 edited = st.data_editor(
     df_sel[["include", "item_id", "full_activity", "client_price", "partner_price_effective"]],
     use_container_width=True,
@@ -240,7 +294,6 @@ edited = st.data_editor(
 )
 
 df_sel["include"] = edited["include"]
-
 included = df_sel[df_sel["include"]].copy()
 if included.empty:
     st.warning("Seleziona almeno un item da includere.")
@@ -263,19 +316,19 @@ if (included["margin_unit"] < 0).any():
 
 st.markdown("#### Dettaglio margini")
 detail = included[["item_id", "full_activity", "client_price", "partner_price_effective", "margin_unit", "margin_total"]].copy()
-detail = detail.rename(columns={
-    "client_price": "cliente_unit",
-    "partner_price_effective": "partner_unit",
-})
+detail = detail.rename(columns={"client_price": "cliente_unit", "partner_price_effective": "partner_unit"})
 st.dataframe(detail, use_container_width=True)
 
-# Download report
+# -----------------------------
+# Export report
+# -----------------------------
 st.markdown("#### Esporta report")
 report = detail.copy()
 report["regione"] = selected_region
 report["tipo_installazione"] = sel_block
 report["distanza"] = sel_dist
 report["numero_installazioni"] = qty_install
+
 summary = pd.DataFrame([{
     "regione": selected_region,
     "tipo_installazione": sel_block,
@@ -299,17 +352,16 @@ st.download_button(
 )
 
 st.markdown("---")
-with st.expander("Come preparare i file (formato atteso)"):
+with st.expander("Note su precaricamento e persistenza"):
     st.markdown(
-        """
-- Il file Excel **deve rispettare la stessa struttura** del template:
-  - una riga con il titolo tipo *Installazione ...*
-  - colonne con le distanze (es. *2 mt. dal contatore*, *4 mt. ...*)
-  - righe Item in colonna B tipo *Item 2: ...* con i prezzi nelle colonne delle distanze.
-- L'override CSV (opzionale) ha colonne:
-  - `block` (testo identico alla riga Installazione)
-  - `distance` (testo identico all'intestazione distanza)
-  - `item_id` (es. `2` oppure `1.a`)
-  - `fixed_price` (numero)
+        f"""
+**Precaricare il listino cliente**
+- Metti il file nel repo in: `{DEFAULT_CLIENT_XLSX.as_posix()}`
+- Nome file: `{DEFAULT_CLIENT_XLSX.name}`
+
+**Persistenza listini partner**
+- L’app salva i listini in: `{PARTNER_DIR.as_posix()}/<Regione>.xlsx`
+- In locale resta tutto salvato.
+- Su Streamlit Community Cloud i file salvati potrebbero non essere permanenti: per persistenza vera usa storage esterno.
 """
     )

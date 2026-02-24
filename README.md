@@ -1,23 +1,10 @@
 # EV Field Service – Pricing & Margini (Streamlit)
 
-App Streamlit per:
-- caricare **listini Partner** (uno per regione, stesso formato del template Excel)
-- caricare **prezzario Cliente**
-- confrontare prezzi e calcolare **margine** su N installazioni
-- calcolare **rebate al cliente finale** (default 5%)
-- esportare un report Excel.
+## Novità v2
+- **Prezzario cliente precaricabile** nel repo: `data/defaults/client_pricelist.xlsx`
+- **Listini partner persistenti**: salvati in `data/partners/<Regione>.xlsx` (riutilizzabili senza ricaricare)
 
-## Struttura repo
-```
-.
-├─ app.py
-├─ requirements.txt
-├─ data/
-│  ├─ partners/          # listini partner salvati per regione (file .xlsx)
-│  └─ defaults/          # opzionale (puoi aggiungere template o esempi)
-└─ .streamlit/
-   └─ config.toml
-```
+> Nota: Streamlit Community Cloud può avere filesystem non persistente. Per produzione: storage esterno (S3/Blob/DB).
 
 ## Avvio locale
 ```bash
@@ -27,17 +14,10 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Deploy su Streamlit Community Cloud (via GitHub)
-1. Crea un repo su GitHub e carica questi file.
-2. Vai su Streamlit Community Cloud e collega il repo.
-3. Entry point: `app.py`.
+## Precaricare prezzario cliente
+1. Metti il tuo file Excel nel repo:
+   - `data/defaults/client_pricelist.xlsx`
+2. L'app mostrerà l'opzione **Usa precaricato (repo)**.
 
-> Nota: su Streamlit Cloud il filesystem può essere effimero: i file caricati potrebbero non persistere.  
-> Per uso production, salva i listini su storage esterno (S3, Azure Blob, GDrive, DB) e caricali via API.
-
-## Formato file atteso
-- Il file Excel deve seguire il template:
-  - riga `Installazione ...`
-  - intestazioni distanze in riga (colonne C..)
-  - righe `Item ...` in colonna B e prezzi nelle colonne distanza.
-- Override CSV (opzionale): colonne `block,distance,item_id,fixed_price`
+## Override prezzi partner (opzionale)
+CSV con colonne: `block,distance,item_id,fixed_price`
