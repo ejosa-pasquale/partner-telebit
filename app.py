@@ -272,14 +272,15 @@ used_override_total = override_total_value is not None
 partner_total_unit = float(override_total_value) if used_override_total else partner_total_unit_calc
 
 margin_unit = client_total_unit - partner_total_unit
-gross_margin = margin_unit * float(qty_install)
-rebate = gross_margin * rebate_pct
-net_profit = gross_margin - rebate
+ricavo_totale = margin_unit * float(qty_install)  # delta (cliente - partner) * N installazioni
+rebate_base = max(0.0, ricavo_totale)  # il rebate non può essere negativo
+rebate = rebate_base * rebate_pct
+net_profit = ricavo_totale - rebate
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Totale Cliente (unitario)", format_eur(client_total_unit))
 k2.metric("Totale Partner (unitario)", format_eur(partner_total_unit))
-k3.metric("Margine lordo totale", format_eur(gross_margin))
+k3.metric("Ricavo (Δ cliente - partner) totale", format_eur(ricavo_totale))
 k4.metric(f"Guadagno netto (rebate {rebate_pct*100:.1f}%)", format_eur(net_profit))
 
 if used_override_total:
@@ -305,7 +306,9 @@ summary = pd.DataFrame([{
     "override_totale_partner_usato": used_override_total,
     "override_totale_partner_valore": override_total_value if used_override_total else None,
     "margine_unit": margin_unit,
-    "margine_lordo_totale": gross_margin,
+    "ricavo_unit": margin_unit,  # Δ cliente - partner
+    "ricavo_totale": ricavo_totale,
+    "margine_lordo_totale": ricavo_totale,  # compat: era gross_margin
     "rebate_pct": rebate_pct,
     "rebate": rebate,
     "guadagno_netto": net_profit,
