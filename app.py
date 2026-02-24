@@ -134,7 +134,7 @@ def get_override_total_value(df_override: pd.DataFrame, region: str, block: str,
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
-st.caption("Prezzario cliente (anche precaricato) + listini partner per regione. Margine su N installazioni + rebate 5%.")
+st.caption("Prezzario cliente (anche precaricato) + listini partner per regione. Margine su N installazioni + rebate configurabile.")
 
 with st.sidebar:
     st.header("Configurazione")
@@ -277,11 +277,12 @@ rebate_base = max(0.0, ricavo_totale)  # il rebate non può essere negativo
 rebate = rebate_base * rebate_pct
 net_profit = ricavo_totale - rebate
 
-k1, k2, k3, k4 = st.columns(4)
+k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Totale Cliente (unitario)", format_eur(client_total_unit))
 k2.metric("Totale Partner (unitario)", format_eur(partner_total_unit))
-k3.metric("Ricavo (Δ cliente - partner) totale", format_eur(ricavo_totale))
-k4.metric(f"Guadagno netto (rebate {rebate_pct*100:.1f}%)", format_eur(net_profit))
+k3.metric(f"Ricavo (Δ cliente - partner) totale (x{qty_install:g})", format_eur(ricavo_totale))
+k4.metric(f"Rebate ({rebate_pct*100:.1f}%)", format_eur(rebate))
+k5.metric("Guadagno netto", format_eur(net_profit))
 
 if used_override_total:
     st.info("✅ Override totale partner applicato per questo pacchetto (tipo installazione + distanza).")
