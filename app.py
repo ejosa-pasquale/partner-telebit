@@ -210,7 +210,20 @@ colA, colB = st.columns([1, 2], gap="large")
 with colA:
     st.subheader("Selezione")
     selected_region = st.selectbox("Regione (partner)", options=regions_available)
-    qty_install = st.number_input("Numero installazioni", min_value=1, value=1, step=1)
+
+    st.markdown("**Numero installazioni per area**")
+    c_ne, c_no = st.columns(2)
+    qty_ne = c_ne.number_input("Nord Est", min_value=0, value=0, step=1, key="qty_ne")
+    qty_no = c_no.number_input("Nord Ovest", min_value=0, value=0, step=1, key="qty_no")
+
+    c_ce, c_su = st.columns(2)
+    qty_centro = c_ce.number_input("Centro", min_value=0, value=0, step=1, key="qty_centro")
+    qty_sud = c_su.number_input("Sud", min_value=0, value=0, step=1, key="qty_sud")
+
+    qty_isole = st.number_input("Isole", min_value=0, value=0, step=1, key="qty_isole")
+
+    total_install = int(qty_ne + qty_no + qty_centro + qty_sud + qty_isole)
+    st.caption(f"Totale installazioni: **{total_install}**")
 
 with colB:
     st.subheader("Input operativi")
@@ -272,17 +285,32 @@ used_override_total = override_total_value is not None
 partner_total_unit = float(override_total_value) if used_override_total else partner_total_unit_calc
 
 margin_unit = client_total_unit - partner_total_unit
-ricavo_totale = margin_unit * float(qty_install)  # delta (cliente - partner) * N installazioni
-rebate_base = max(0.0, ricavo_totale)  # il rebate non può essere negativo
-rebate = rebate_base * rebate_pct
-net_profit = ricavo_totale - rebate
 
-k1, k2, k3, k4, k5 = st.columns(5)
+if total_install <= 0:
+    st.warning("Inserisci almeno 1 installazione (somma delle aree > 0).")
+    st.stop()
+
+# Totali su tutte le installazioni (somma aree)
+fatturato_totale = client_total_unit * float(total_install)          # costo totale al cliente / ricavi (fatturato)
+costo_terzi_totale = partner_total_unit * float(total_install)       # costo verso terzi (partner)
+delta_totale = fatturato_totale - costo_terzi_totale                 # Δ totale (cliente - partner)
+
+rebate_base = max(0.0, delta_totale)  # il rebate non può essere negativo
+rebate = rebate_base * rebate_pct
+net_profit = delta_totale - rebate
+
+
+k1, k2, k3, k4 = st.columns(4)
 k1.metric("Totale Cliente (unitario)", format_eur(client_total_unit))
 k2.metric("Totale Partner (unitario)", format_eur(partner_total_unit))
-k3.metric(f"Ricavo (Δ cliente - partner) totale (x{qty_install:g})", format_eur(ricavo_totale))
-k4.metric(f"Rebate ({rebate_pct*100:.1f}%)", format_eur(rebate))
-k5.metric("Guadagno netto", format_eur(net_profit))
+k3.metric(f"Fatturato totale (x{total_install:g})", format_eur(fatturato_totale))
+k4.metric(f"Costo verso terzi totale (x{total_install:g})", format_eur(costo_terzi_totale))
+
+k5, k6, k7 = st.columns(3)
+k5.metric("Delta totale (Fatturato - Terzi)", format_eur(delta_totale))
+k6.metric(f"Rebate ({rebate_pct*100:.1f}%)", format_eur(rebate))
+k7.metric("Utile netto", format_eur(net_profit))
+
 
 if used_override_total:
     st.info("✅ Override totale partner applicato per questo pacchetto (tipo installazione + distanza).")
@@ -298,20 +326,39 @@ st.dataframe(detail, use_container_width=True)
 
 st.markdown("#### Esporta report")
 summary = pd.DataFrame([{
-    "regione": selected_region,
+    "regione_listino_partner": selected_region,
     "tipo_installazione": sel_block,
     "distanza": sel_dist,
-    "numero_installazioni": qty_install,
+
+    # Volumi
+    "install_nord_est": int(qty_ne),
+    "install_nord_ovest": int(qty_no),
+    "install_centro": int(qty_centro),
+    "install_sud": int(qty_sud),
+    "install_isole": int(qty_isole),
+    "numero_installazioni_totale": int(total_install),
+
+    # Unitari
     "totale_cliente_unit": client_total_unit,
     "totale_partner_unit": partner_total_unit,
     "override_totale_partner_usato": used_override_total,
     "override_totale_partner_valore": override_total_value if used_override_total else None,
-    "margine_unit": margin_unit,
-    "ricavo_unit": margin_unit,  # Δ cliente - partner
-    "ricavo_totale": ricavo_totale,
-    "margine_lordo_totale": ricavo_totale,  # compat: era gross_margin
+    "delta_unit": margin_unit,  # Δ cliente - partner (unitario)
+
+    # Totali (somma di tutte le installazioni)
+    "fatturato_totale": fatturato_totale,
+    "costo_terzi_totale": costo_terzi_totale,
+    "delta_totale": delta_totale,
+
+    # Rebate e utile
     "rebate_pct": rebate_pct,
     "rebate": rebate,
+    "utile_netto": net_profit,
+
+    # Compatibilità con export precedente
+    "ricavo_unit": margin_unit,
+    "ricavo_totale": delta_totale,
+    "margine_lordo_totale": delta_totale,
     "guadagno_netto": net_profit,
 }])
 
